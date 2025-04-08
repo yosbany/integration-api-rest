@@ -2,14 +2,8 @@ services:
   - type: web
     name: integration-api-rest
     env: node
-    buildCommand: |
-      npm install
-      npm install puppeteer
-      apt-get update -y
-      apt-get install -y chromium-browser
+    buildCommand: npm install
     startCommand: node integration-api-rest.js
     envVars:
-      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-        value: false
       - key: NODE_ENV
         value: production 
