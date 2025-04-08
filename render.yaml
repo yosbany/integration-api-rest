@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: integration-api-rest
+    env: node
+    buildCommand: |
+      npm install
+      apt-get update -y
+      apt-get install -y chromium-browser
+    startCommand: node integration-api-rest.js
+    envVars:
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: true
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium-browser
+      - key: NODE_ENV
+        value: production 
