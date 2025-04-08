@@ -135,13 +135,34 @@ app.post('/zureo/login', async (req, res) => {
     }
 
     browser = await puppeteer.launch({
-      headless: false,
-      defaultViewport: null,
+      headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--start-maximized'
-      ]
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        '--disable-accelerated-2d-canvas',
+        '--disable-infobars',
+        '--window-size=1920x1080',
+        '--hide-scrollbars',
+        '--disable-notifications',
+        '--disable-offer-store-unmasked-wallet-cards',
+        '--disable-popup-blocking',
+        '--disable-prompt-on-repost',
+        '--disable-sync',
+        '--disable-translate',
+        '--metrics-recording-only',
+        '--no-first-run',
+        '--safebrowsing-disable-auto-update',
+        '--password-store=basic',
+        '--use-mock-keychain',
+        '--disable-features=site-per-process',
+        '--disable-features=IsolateOrigins',
+        '--disable-site-isolation-trials'
+      ],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
     });
     page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
