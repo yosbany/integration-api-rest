@@ -135,19 +135,13 @@ app.post('/zureo/login', async (req, res) => {
       });
     }
 
-    // Configurar el navegador para Render
+    // Configurar el navegador con chrome-aws-lambda
+    const executablePath = await chromium.executablePath;
+    
     browser = await puppeteer.launch({
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ],
-      headless: true,
+      args: chromium.args,
+      executablePath: executablePath,
+      headless: chromium.headless,
       defaultViewport: { width: 1366, height: 768 }
     });
     
