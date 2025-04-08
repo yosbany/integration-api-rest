@@ -5,7 +5,7 @@ const os = require('os');
 const { exec } = require('child_process');
 const dotenv = require('dotenv');
 
-const requiredModules = ['dotenv', 'express', 'puppeteer'];
+const requiredModules = ['dotenv', 'express', 'puppeteer-core', 'chrome-aws-lambda'];
 for (const module of requiredModules) {
   try {
     require.resolve(module);
@@ -134,14 +134,60 @@ app.post('/zureo/login', async (req, res) => {
       });
     }
 
-    // En lugar de usar Puppeteer, simulamos un login exitoso
-    // Esto es una solución temporal para el despliegue en Render
-    console.log('✅ Simulando login exitoso en Zureo');
+    // Configurar el navegador para Render
+    browser = await puppeteer.launch({
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ],
+      headless: true,
+      defaultViewport: { width: 1366, height: 768 }
+    });
     
-    // Devolvemos una respuesta de éxito
+    page = await browser.newPage();
+    await page.goto('https://go.zureo.com/', {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+
+    await page.type('#empresaLogin', process.env.ZUREO_CODIGO);
+    await page.type('#usuarioLogin', process.env.ZUREO_EMAIL);
+    await page.type('#passwordLogin', process.env.ZUREO_PASSWORD);
+
+    const [response] = await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }),
+      page.click('button[type="submit"]'),
+      (async () => {
+        try {
+          console.log('⏳ Verificando si aparece el modal de sesión activa...');
+          await page.waitForFunction(() => {
+            const modal = document.querySelector('.modal-content');
+            const body = modal?.querySelector('.modal-body');
+            return body && body.innerText.includes('Su sesión se encuentra activa en otro dispositivo');
+          }, { timeout: 5000 });
+
+          console.log('⚠️ Modal detectado. Haciendo clic en "Continuar"...');
+          await page.evaluate(() => {
+            const modal = document.querySelector('.modal-content');
+            const btn = modal?.querySelector('button.z-btn.btn-primary');
+            if (btn) btn.click();
+          });
+        } catch {
+          console.log('✅ No apareció modal de sesión activa.');
+        }
+      })()
+    ]);
+
+    console.log('✅ Sesión iniciada en Zureo');
     res.json({
       status: 'success',
-      message: 'Login successful (simulated)',
+      message: 'Login successful',
       timestamp: new Date().toISOString()
     });
   } catch (err) {
@@ -152,14 +198,48 @@ app.post('/zureo/login', async (req, res) => {
 
 // 📦 STOCK
 app.get('/zureo/stock/:sku', async (req, res) => {
+  if (!page) return res.status(400).json({ error: 'No has iniciado sesión. Usá /zureo/login primero.' });
+
   const sku = req.params.sku;
 
   try {
     console.log(`\n🔍 Consultando stock para SKU: ${sku}`);
-    
-    // Simulamos una respuesta de stock
-    const stock = Math.floor(Math.random() * 100);
-    
+    await page.goto('https://go.zureo.com/#/informes/stockarticulo', { waitUntil: 'networkidle2' });
+
+    const panelExists = await page.$('div.z-div-collapse');
+    if (panelExists) {
+      console.log(`↩️ Limpiando búsqueda anterior`);
+      await page.click('div.z-div-collapse');
+      await page.evaluate(() => {
+        const input = document.querySelector('#id_0');
+        if (input) input.value = '';
+      });
+      await page.click('#id_0');
+      await page.keyboard.down('Control');
+      await page.keyboard.press('A');
+      await page.keyboard.up('Control');
+      await page.keyboard.press('Backspace');
+    }
+
+    await page.waitForSelector('#id_0', { timeout: 10000 });
+    await page.type('#id_0', sku);
+
+    console.log(`⌛ Esperando sugerencia...`);
+    await page.waitForSelector('a[ng-bind-html]', { timeout: 10000 });
+    await page.click('a[ng-bind-html]');
+
+    await page.waitForSelector('#consultar', { timeout: 5000 });
+    await page.click('#consultar');
+
+    await page.waitForSelector('h1.z-heading.m-n.ng-binding', { timeout: 10000 });
+
+    const stock = await page.evaluate(() => {
+      const el = document.querySelector('h1.z-heading.m-n.ng-binding');
+      return el ? el.innerText.trim() : null;
+    });
+
+    if (!stock) return res.status(404).json({ error: 'Stock no encontrado.' });
+
     console.log(`✅ Stock actual para ${sku}: ${stock}`);
     res.json({ sku, stock });
   } catch (err) {
@@ -170,14 +250,111 @@ app.get('/zureo/stock/:sku', async (req, res) => {
 
 // 🛠️ AJUSTAR STOCK
 app.get('/zureo/ajustar/:sku/:cantidad', async (req, res) => {
+  if (!page) return res.status(400).json({ error: 'No has iniciado sesión. Usá /zureo/login primero.' });
+
   const { sku, cantidad } = req.params;
 
   try {
     console.log(`\n🛠️ Iniciando ajuste de stock para SKU: ${sku} => ${cantidad}`);
     
-    // Simulamos un ajuste exitoso
+    // Navegar a la página de ajuste con espera explícita
+    await page.goto('https://go.zureo.com/#/ajustar', { 
+      waitUntil: ['networkidle2', 'domcontentloaded'],
+      timeout: 30000 
+    });
+
+    // Esperar a que la página esté realmente cargada
+    await page.waitForFunction(() => {
+      return document && document.readyState === 'complete';
+    }, { timeout: 20000 });
+
+    console.log(`🟡 Seleccionando tipo de ajuste...`);
+    await page.waitForSelector('#tipoAjuste', { visible: true, timeout: 20000 });
+    await page.select('#tipoAjuste', 'number:1');
+
+    console.log(`🟡 Ingresando SKU: ${sku}`);
+    await page.waitForSelector('#articulo', { visible: true, timeout: 20000 });
+    
+    // Limpiar el campo de artículo de forma más robusta
+    await page.evaluate(() => {
+      const input = document.querySelector('#articulo');
+      if (input) {
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    await page.type('#articulo', sku, { delay: 100 });
+
+    console.log(`⌛ Esperando sugerencia...`);
+    
+    // Esperar a que aparezca la sugerencia de manera más robusta
+    await page.waitForFunction(
+      (searchText) => {
+        const suggestions = Array.from(document.querySelectorAll('a[ng-bind-html]'));
+        return suggestions.some(el => el.textContent.includes(searchText));
+      },
+      { timeout: 20000 },
+      sku
+    );
+
+    // Hacer clic en la sugerencia correcta
+    await page.evaluate((searchText) => {
+      const suggestions = Array.from(document.querySelectorAll('a[ng-bind-html]'));
+      const targetSuggestion = suggestions.find(el => el.textContent.includes(searchText));
+      if (targetSuggestion) targetSuggestion.click();
+    }, sku);
+
+    console.log(`✅ Artículo seleccionado`);
+
+    console.log(`⌛ Esperando carga del stock actual...`);
+    await page.waitForSelector('input[ng-model="z.filtros.tengo"]', { visible: true, timeout: 20000 });
+    console.log(`✅ Stock actual cargado`);
+
+    console.log(`🟡 Ingresando cantidad: ${cantidad}`);
+    await page.waitForSelector('#deboTener', { visible: true, timeout: 20000 });
+    
+    // Limpiar e ingresar la cantidad de forma más robusta
+    await page.evaluate((value) => {
+      const input = document.querySelector('#deboTener');
+      if (input) {
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, cantidad);
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log(`✅ Cantidad "${cantidad}" ingresada`);
+
+    console.log(`🟡 Agregando ajuste...`);
+    await page.waitForSelector('button.btn-agregar:not([disabled])', { visible: true, timeout: 20000 });
+    await page.click('button.btn-agregar');
+    console.log(`✅ Movimiento agregado`);
+
+    console.log(`🟡 Grabando ajuste...`);
+    await page.waitForSelector('button.btn-primary.z-button', { visible: true, timeout: 20000 });
+    await page.click('button.btn-primary.z-button');
+
+    console.log(`⌛ Esperando modal de confirmación...`);
+    await page.waitForFunction(() => {
+      const modal = document.querySelector('.modal-content');
+      const body = modal?.querySelector('.modal-body');
+      const btn = modal?.querySelector('button.btn-primary');
+      return body && body.innerText.includes('Se ajustará el stock') && btn;
+    }, { timeout: 20000 });
+
+    console.log(`✅ Modal detectado. Confirmando...`);
+    await page.evaluate(() => {
+      const modal = document.querySelector('.modal-content');
+      const btn = modal?.querySelector('button.btn-primary');
+      if (btn) btn.click();
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 2000));
     console.log(`✅ Ajuste finalizado para ${sku}`);
-    res.json({ success: true, message: `Stock ajustado a ${cantidad} para SKU ${sku} (simulado)` });
+    res.json({ success: true, message: `Stock ajustado a ${cantidad} para SKU ${sku}` });
   } catch (err) {
     console.error('❌ Error ajustando stock:', err);
     res.status(500).json({ error: err.message });
