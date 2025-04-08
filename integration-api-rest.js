@@ -16,15 +16,22 @@ for (const module of requiredModules) {
   }
 }
 
-const envPath = path.resolve(__dirname, '.env');
-if (!fs.existsSync(envPath)) {
-  console.error('❌ ERROR: No se encontró el archivo ".env" en el directorio del proyecto.');
-  console.error('➡️ Crea el archivo .env con tus credenciales antes de iniciar.');
+// Cargar variables de entorno si existe .env, pero no es obligatorio
+dotenv.config();
+
+// Validar que existan las variables de entorno requeridas
+const requiredEnvVars = ['ZUREO_CODIGO', 'ZUREO_EMAIL', 'ZUREO_PASSWORD'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ ERROR: Faltan las siguientes variables de entorno:');
+  missingEnvVars.forEach(varName => {
+    console.error(`➡️ ${varName}`);
+  });
   process.exit(1);
 }
 
 // ✅ Inicialización
-dotenv.config();
 const express = require('express');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
