@@ -34,7 +34,8 @@ if (missingEnvVars.length > 0) {
 // ✅ Inicialización
 const express = require('express');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('chrome-aws-lambda');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
